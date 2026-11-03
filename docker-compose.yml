@@ -1,0 +1,24 @@
+# Local n8n for LendLoop. Secrets come from .env (never from the workflow JSON).
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_PORT=5678
+      - WEBHOOK_URL=${N8N_PUBLIC_URL:-http://localhost:5678/}
+      - GENERIC_TIMEZONE=UTC
+      # Code nodes need Node's crypto for HMAC, and read the shared secret from env.
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - LENDLOOP_N8N_SECRET=${LENDLOOP_N8N_SECRET:?set LENDLOOP_N8N_SECRET in .env}
+      - LENDLOOP_CONVEX_SITE_URL=${LENDLOOP_CONVEX_SITE_URL:?set LENDLOOP_CONVEX_SITE_URL in .env}
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_RUNNERS_ENABLED=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+volumes:
+  n8n_data:

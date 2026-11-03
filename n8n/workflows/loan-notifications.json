@@ -1,0 +1,173 @@
+{
+  "id": "LendLoopLoanNotify01",
+  "name": "LendLoop – Loan notifications",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "LendLoopErrHandler01",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-loan-events",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "name": "Convex webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "lendloop-loan-events"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Verifies the Convex signature on the raw request body before anything else runs.\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_N8N_SECRET;\nconst item = $input.first();\nconst h = item.json.headers || {};\nconst raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\nconst ts = h['x-lendloop-timestamp'] || '';\nconst sig = (h['x-lendloop-signature'] || '').toLowerCase();\nconst path = '/webhook/lendloop-loan-events';\nlet valid = false;\nif (secret && /^\\d{10}$/.test(ts) && Math.abs(Date.now() / 1000 - Number(ts)) <= 300) {\n  const expected = crypto.createHmac('sha256', secret).update(`${ts}.POST ${path}.${raw}`).digest('hex');\n  valid = sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));\n}\n// Pass on only what the notification needs; never echo headers or secrets.\nlet p = {};\ntry { p = JSON.parse(raw); } catch (e) { valid = false; }\nreturn [{ json: { valid, event: p.event, idempotencyKey: p.idempotencyKey, toolName: p.toolName, startDate: p.startDate, endDate: p.endDate, recipient: p.recipient } }];"
+      },
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Mock delivery: logs the message an email/Slack node would send. Swap this\n// node for Send Email or Slack in production; it receives the same fields.\nconst j = $input.first().json;\nconst verbs = { 'loan.requested': 'has a new borrow request for', 'loan.approved': 'your request was approved for',\n  'loan.declined': 'your request was declined for', 'loan.cancelled': 'a request was cancelled for', 'loan.returned': 'the return was confirmed for' };\nconst message = `Hi ${j.recipient?.name ?? 'there'}, ${verbs[j.event] ?? 'there is an update on'} \"${j.toolName}\" (${j.startDate} → ${j.endDate}).`;\nconsole.log(`[LendLoop notify] key=${j.idempotencyKey} to=${j.recipient?.email} :: ${message}`);\nreturn [{ json: { delivered: true, idempotencyKey: j.idempotencyKey } }];"
+      },
+      "name": "Send notification (mock)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: 'unauthorized' } }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Convex webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Signature valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid?": {
+      "main": [
+        [
+          {
+            "node": "Send notification (mock)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send notification (mock)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
